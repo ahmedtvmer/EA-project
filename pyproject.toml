@@ -1,11 +1,16 @@
 [project]
 name = "ea-project"
 version = "0.1.0"
-description = "Add your description here"
+description = "Adaptive recommendation engine using coevolutionary algorithms"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.4.4",
     "pandas>=3.0.2",
     "streamlit>=1.56.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
 ]
