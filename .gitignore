@@ -27,5 +27,3 @@ project_instructions/
 *.swp
 uv.lock
 
-coevolution_base.py
-data.py
