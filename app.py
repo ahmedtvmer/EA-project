@@ -1,77 +1,8 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import random
 import data
-import coevolution_base as cb
-
-
-def run_ea(train, test, generations, seed):
-    n_users, n_items = train.shape
-    latent_dim = cb.GENOME_LENGTH
-    
-    random.seed(seed)
-    
-    users = [cb.create_individual() for _ in range(n_users)]
-    items = [cb.create_individual() for _ in range(n_items)]
-    
-    rmse_history = []
-    
-    for gen in range(generations):
-        user_vectors = np.array(users)
-        item_vectors = np.array(items)
-        
-        predicted = user_vectors @ item_vectors.T
-        predicted = predicted * 4 + 1
-        predicted = np.clip(predicted, 1, 5)
-        
-        train_mask = train > 0
-        test_mask = test > 0
-        
-        if train_mask.sum() > 0:
-            train_rmse = data.calculate_fitness(predicted, train, mask=train_mask)
-        else:
-            train_rmse = 0.0
-        
-        if test_mask.sum() > 0:
-            test_rmse = data.calculate_fitness(predicted, test, mask=test_mask)
-        else:
-            test_rmse = train_rmse
-        
-        rmse_history.append(test_rmse)
-        
-        user_fitnesses = []
-        for i in range(n_users):
-            user_pred = predicted[i, :]
-            user_actual = train[i, :]
-            user_mask = user_actual > 0
-            if user_mask.sum() > 0:
-                user_rmse = data.calculate_fitness(user_pred, user_actual, mask=user_mask)
-            else:
-                user_rmse = 0.5
-            user_fitnesses.append(1.0 / (user_rmse + 1e-6))
-        
-        item_fitnesses = []
-        for j in range(n_items):
-            item_pred = predicted[:, j]
-            item_actual = train[:, j]
-            item_mask = item_actual > 0
-            if item_mask.sum() > 0:
-                item_rmse = data.calculate_fitness(item_pred, item_actual, mask=item_mask)
-            else:
-                item_rmse = 0.5
-            item_fitnesses.append(1.0 / (item_rmse + 1e-6))
-        
-        users = cb.next_generation(users, user_fitnesses)
-        items = cb.next_generation(items, item_fitnesses)
-    
-    final_user_vectors = np.array(users)
-    final_item_vectors = np.array(items)
-    final_predicted = final_user_vectors @ final_item_vectors.T
-    final_predicted = final_predicted * 4 + 1
-    final_predicted = np.clip(final_predicted, 1, 5)
-    
-    return final_predicted, rmse_history
+import coevolution_engine as ce
 
 
 st.set_page_config(page_title="Coevolutionary Recommender", layout="wide")
@@ -110,7 +41,7 @@ if five_star_mask.sum() > 0:
     five_star_items = items[five_star_mask]
     five_star_titles = [titles.get(iid, f"Item {iid}") for iid in five_star_items[:5]]
     for title in five_star_titles:
-        st.sidebar.write(f"⭐ {title}")
+        st.sidebar.write(f" {title}")
     if len(five_star_items) > 5:
         st.sidebar.caption(f"+{len(five_star_items) - 5} more")
 else:
@@ -122,56 +53,104 @@ if st.sidebar.button("Run Coevolution Training", type="primary"):
     chart_placeholder = st.empty()
     progress_bar = st.progress(0)
     
-    rmse_history = []
+    with st.spinner("Running both strategies for comparison..."):
+        coop_user_pop, coop_item_pop, coop_history = ce.run_coevolution(
+            train_matrix=train,
+            test_matrix=test,
+            n_generations=generations,
+            strategy="cooperative",
+            seed=42,
+            verbose=False
+        )
+        
+        progress_bar.progress(50)
+        
+        comp_user_pop, comp_item_pop, comp_history = ce.run_coevolution(
+            train_matrix=train,
+            test_matrix=test,
+            n_generations=generations,
+            strategy="competitive",
+            seed=42,
+            verbose=False
+        )
+        
+        progress_bar.progress(100)
     
-    predicted_matrix, rmse_history = run_ea(
-        train=train,
-        test=test,
-        generations=generations,
-        seed=42
-    )
+    coop_rmse = [h["test_rmse"] for h in coop_history]
+    comp_rmse = [h["test_rmse"] for h in comp_history]
     
-    for gen, rmse in enumerate(rmse_history):
-        rmse_history_partial = rmse_history[:gen+1]
-        chart_placeholder.line_chart(rmse_history_partial, height=300)
-        progress_bar.progress((gen + 1) / generations)
+    comparison_df = pd.DataFrame({
+        "Cooperative": coop_rmse,
+        "Competitive": comp_rmse,
+    })
+    chart_placeholder.line_chart(comparison_df, height=300)
     
-    st.success(f"Training complete. Final RMSE: {rmse_history[-1]:.4f}")
+    coop_final = coop_history[-1]["test_rmse"]
+    comp_final = comp_history[-1]["test_rmse"]
+    
+    st.success(f"Training complete. Cooperative RMSE: {coop_final:.4f} | Competitive RMSE: {comp_final:.4f}")
+    
+    st.subheader("Strategy Comparison")
+    
+    comparison_table = pd.DataFrame([
+        {
+            "Strategy": "Cooperative",
+            "Initial RMSE": round(coop_history[0]["test_rmse"], 4),
+            "Final RMSE": round(coop_final, 4),
+            "Improvement": round(baseline_rmse - coop_final, 4),
+            "Avg User Fitness": round(coop_history[-1]["avg_user_fitness"], 4),
+            "Avg Item Fitness": round(coop_history[-1]["avg_item_fitness"], 4),
+        },
+        {
+            "Strategy": "Competitive",
+            "Initial RMSE": round(comp_history[0]["test_rmse"], 4),
+            "Final RMSE": round(comp_final, 4),
+            "Improvement": round(baseline_rmse - comp_final, 4),
+            "Avg User Fitness": round(comp_history[-1]["avg_user_fitness"], 4),
+            "Avg Item Fitness": round(comp_history[-1]["avg_item_fitness"], 4),
+        },
+    ])
+    st.dataframe(comparison_table, width="stretch", hide_index=True)
     
     st.subheader(f"Top Recommendations for User {target_user}")
     
-    unrated_mask = user_ratings == 0
+    rated_mask = user_ratings > 0
     
-    predicted_ratings = predicted_matrix[user_idx]
-    predicted_ratings_clipped = np.clip(predicted_ratings, 1, 5)
+    coop_results = ce.recommend(user_idx, coop_user_pop, coop_item_pop, items, titles, rated_mask, top_n=5)
+    comp_results = ce.recommend(user_idx, comp_user_pop, comp_item_pop, items, titles, rated_mask, top_n=5)
     
-    unrated_indices = np.where(unrated_mask)[0]
-    unrated_predictions = predicted_ratings_clipped[unrated_indices]
+    col_coop, col_comp = st.columns(2)
     
-    if len(unrated_indices) > 0:
-        top_n_indices = unrated_indices[np.argsort(unrated_predictions)[::-1][:5]]
-        
-        recommendations = []
-        for idx in top_n_indices:
-            item_id = items[idx]
-            movie_title = titles.get(item_id, f"Unknown Movie (ID: {item_id})")
-            pred_rating = predicted_ratings_clipped[idx]
-            recommendations.append({
-                "Movie Title": movie_title,
-                "Item ID": int(item_id),
-                "Predicted Rating": float(pred_rating)
-            })
-        
-        rec_df = pd.DataFrame(recommendations)
-        st.dataframe(rec_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("This user has rated all items.")
+    with col_coop:
+        st.markdown("### Cooperative")
+        if coop_results:
+            coop_df = pd.DataFrame(coop_results)
+            coop_df = coop_df.rename(columns={"title": "Movie Title", "item_id": "Item ID", "predicted_rating": "Predicted Rating"})
+            st.dataframe(coop_df, width="stretch", hide_index=True)
+        else:
+            st.info("This user has rated all items.")
+    
+    with col_comp:
+        st.markdown("### Competitive")
+        if comp_results:
+            comp_df = pd.DataFrame(comp_results)
+            comp_df = comp_df.rename(columns={"title": "Movie Title", "item_id": "Item ID", "predicted_rating": "Predicted Rating"})
+            st.dataframe(comp_df, width="stretch", hide_index=True)
+        else:
+            st.info("This user has rated all items.")
     
     st.subheader("Training Statistics")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Initial RMSE", f"{rmse_history[0]:.4f}")
-    col2.metric("Final RMSE", f"{rmse_history[-1]:.4f}")
-    col3.metric("Best Improvement", f"{max(rmse_history) - rmse_history[-1]:.4f}")
+    
+    coop_best = max(h["test_rmse"] for h in coop_history)
+    comp_best = max(h["test_rmse"] for h in comp_history)
+    
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1.metric("Coop Initial RMSE", f"{coop_history[0]['test_rmse']:.4f}")
+    col2.metric("Coop Final RMSE", f"{coop_history[-1]['test_rmse']:.4f}")
+    col3.metric("Coop Best Improvement", f"{coop_best - coop_history[-1]['test_rmse']:.4f}")
+    col4.metric("Comp Initial RMSE", f"{comp_history[0]['test_rmse']:.4f}")
+    col5.metric("Comp Final RMSE", f"{comp_history[-1]['test_rmse']:.4f}")
+    col6.metric("Comp Best Improvement", f"{comp_best - comp_history[-1]['test_rmse']:.4f}")
 
 else:
     st.info("Adjust parameters and click 'Run' to train the model.")

@@ -6,101 +6,126 @@ Adaptive recommendation system using coevolutionary algorithms for matrix factor
 
 ```bash
 # Install dependencies
-uv sync
-
-# Run with dev dependencies (for testing)
-uv sync --group dev
+pip install -r requirements.txt
 
 # Run the Streamlit app
-uv run streamlit run app.py
+streamlit run app.py
 
-# Run tests
-uv run pytest tests/ -v
+# Run the coevolution engine standalone (tests both strategies)
+python coevolution_engine.py
 
-# Run EA standalone (quick test)
-uv run python ea.py
+# Run the base EA operators standalone
+python coevolution_base.py
+
+# Run the data loader standalone
+python data.py
 ```
 
 ## Features
 
-- **Cooperative Coevolution**: Separate populations for user and item latent factors, evolved cooperatively
-- **Competitive Coevolution**: Two parallel full-solution populations competing on fitness
+- **Cooperative Coevolution**: Users and items evolve together, each evaluated against the best of the other population using RMSE-based fitness
+- **Competitive Coevolution**: Items compete for recommendation slots — fitness based on how often they appear in top-k recommendations
+- **Side-by-Side Comparison**: Both strategies run automatically; overlaid RMSE curves and comparison table displayed
 - **Live Training Visualization**: RMSE convergence plotted in real-time
 - **Personalized Recommendations**: Top-N movie recommendations for any user
+- **5-Star History**: Shows the target user's actual 5-star rated movies as a trust anchor
 - **Baseline Comparison**: Global-mean RMSE displayed for comparison
 
 ## Architecture
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   app.py    │────▶│    ea.py    │────▶│   data.py   │
-│  Streamlit  │    │  EA Core    │     │   Data IO   │
-│     UI      │     │  Algorithm  │     │  + Matrix   │
-└─────────────┘     └─────────────┘     └─────────────┘
+┌─────────────┐     ┌─────────────────────┐     ┌───────────────────┐
+│   app.py    │────▶│ coevolution_engine  │────▶│ coevolution_base  │
+│  Streamlit  │     │  (both strategies)  │     │  (EA operators)   │
+│     UI      │     │                     │     │                   │
+└──────┬──────┘     └──────────┬──────────┘     └───────────────────┘
+       │                       │
+       └───────────────────────┼─────────────────────────────────────┐
+                               ▼                                     ▼
+                       ┌───────────────┐                     ┌───────────────┐
+                       │   data.py     │                     │   data.py     │
+                       │  (data IO)    │                     │  (fitness)    │
+                       └───────────────┘                     └───────────────┘
 ```
 
-- **`data.py`**: Loads MovieLens dataset, builds rating matrix, train/test split, RMSE fitness
-- **`ea.py`**: Coevolutionary algorithm core (CooperativeEA, CompetitiveEA, operators)
-- **`app.py`**: Streamlit UI for interactive training and recommendations
+### Module Responsibilities
+
+| Module | Purpose |
+|--------|---------|
+| `data.py` | Loads MovieLens 100K dataset, builds rating matrix, train/test split, RMSE fitness calculation |
+| `coevolution_base.py` | Core EA operators: individual creation, tournament selection, single-point crossover, Gaussian mutation, next generation |
+| `coevolution_engine.py` | Coevolutionary strategies: cooperative fitness, competitive fitness, elitism, full training loop, recommendation generation |
+| `app.py` | Streamlit UI: parameter controls, live RMSE chart, strategy comparison table, recommendations display |
 
 ## Algorithm
 
 ### Cooperative Strategy
-- User population: latent factor vectors for all users
-- Item population: latent factor vectors for all items
-- Fitness pairing: best-of-population (each user evaluated against best item vector, vice versa)
-- Output: `user_factors @ item_factors.T`
+- **Fitness**: Per-user and per-item RMSE on training set, inverted to maximization (`1/(rmse + eps)`)
+- **Pairing**: Each user/item evaluated against the current predicted matrix
+- **Evolution**: Tournament selection → crossover → mutation → elitism (top 2 preserved)
 
 ### Competitive Strategy
-- Two parallel populations, each containing full solutions (user + item factors)
-- Competition: best individual from each population competes; winner gets more elite slots
-- Output: best solution across both populations
+- **User fitness**: Same RMSE-based as cooperative
+- **Item fitness**: Based on how often each item appears in top-k recommendations across all users — items compete for visibility
+- **Evolution**: Same operators; competition drives items to be more discriminative
 
-### Operators
-- **Selection**: Tournament (size=3)
-- **Crossover**: Blend (BLX-α, α=0.5, rate=0.8)
-- **Mutation**: Gaussian (scale=0.1, rate=0.1)
-- **Elitism**: Top 2 preserved per generation
+### EA Operators (from `coevolution_base.py`)
+
+| Operator | Type | Parameters |
+|----------|------|------------|
+| Selection | Tournament | Size = 3 |
+| Crossover | Single-point | Rate = 0.7 |
+| Mutation | Gaussian noise | Rate = 0.1, σ = 0.1 |
+| Elitism | Top-N preservation | Count = 2 |
+| Genome | Float vector [0, 1] | Length = 5 |
 
 ## Configuration
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| Latent Dimensions | 20 | Dimensionality of user/item latent vectors |
-| Population Size | 50 | Number of individuals per population |
-| Generations | 50 | Number of EA generations |
-| Crossover Rate | 0.8 | Probability of crossover |
-| Mutation Rate | 0.1 | Probability of mutation per gene |
-| Mutation Scale | 0.1 | Standard deviation of Gaussian mutation |
-| Tournament Size | 3 | Number of individuals in tournament |
-| Elite Size | 2 | Number of elites preserved |
+| Parameter | Default | Location |
+|-----------|---------|----------|
+| Genome Length (latent dim) | 5 | `coevolution_base.py` |
+| Mutation Rate | 0.1 | `coevolution_base.py` |
+| Crossover Rate | 0.7 | `coevolution_base.py` |
+| Tournament Size | 3 | `coevolution_base.py` |
+| Elitism Count | 2 | `coevolution_engine.py` |
+| Generations | 50 (UI slider) | `app.py` |
 
 ## Dataset
 
-MovieLens 100K:
+**MovieLens 100K** (publicly available from [GroupLens](https://grouplens.org/datasets/movielens/100k/)):
 - 943 users
 - 1,682 items (movies)
 - 100,000 ratings (1-5 scale)
 - Sparsity: ~93.7%
 
-Auto-downloaded from [GroupLens](https://files.grouplens.org/datasets/movielens/ml-100k.zip) on first run.
+Auto-downloaded from GroupLens on first run. Stored in `ml-100k/` directory.
 
-## Success Criteria
+## Project Structure
 
-- Cooperative EA achieves RMSE < 1.10 on test set (baseline: ~1.13)
-- Competitive EA achieves RMSE within 5% of cooperative
-- Training (50 generations) completes in < 30 seconds
-- Reproducible results with fixed seed
+```
+.
+├── app.py                  # Streamlit UI
+├── coevolution_base.py     # EA operators (selection, crossover, mutation)
+├── coevolution_engine.py   # Coevolution strategies (cooperative + competitive)
+├── data.py                 # MovieLens data loading and RMSE fitness
+├── requirements.txt        # Python dependencies
+├── ml-100k/                # Dataset (auto-downloaded)
+├── project_instructions/   # Course assignment documents
+├── pyproject.toml          # Project dependencies
+└── README.md               # This file
+```
 
-## Development
+## Dependencies
 
-This project follows the Spec Kit methodology. See:
+- Python 3.12+
+- numpy>=2.4.4
+- pandas>=3.0.2
+- streamlit>=1.56.0
 
-- `specs/001-ea-recommender/spec.md` - Feature specification
-- `specs/001-ea-recommender/plan.md` - Implementation plan
-- `specs/001-ea-recommender/tasks.md` - Task breakdown
-- `.specify/memory/constitution.md` - Project constitution
+Install via `pip install -r requirements.txt`.
 
-## License
+## Course
 
-MIT
+AI420 – Evolutionary Algorithms | Spring 2025-2026  
+Capital University, Faculty of Computing & Artificial Intelligence  
+Project [10]: Adaptive Recommendation Engine using Coevolutionary Algorithms
