@@ -10,6 +10,18 @@ st.title("Adaptive Recommendation Engine")
 
 
 @st.cache_data
+def cached_run_coevolution(train_matrix, test_matrix, n_generations, strategy, seed):
+    return ce.run_coevolution(
+        train_matrix=train_matrix,
+        test_matrix=test_matrix,
+        n_generations=n_generations,
+        strategy=strategy,
+        seed=seed,
+        verbose=False
+    )
+
+
+@st.cache_data
 def load_and_prep_data():
     matrix, users, items, titles = data.get_rating_matrix()
     train, test = data.train_test_split_matrix(matrix)
@@ -53,28 +65,25 @@ if st.sidebar.button("Run Coevolution Training", type="primary"):
     chart_placeholder = st.empty()
     progress_bar = st.progress(0)
     
-    with st.spinner("Running both strategies for comparison..."):
-        coop_user_pop, coop_item_pop, coop_history = ce.run_coevolution(
-            train_matrix=train,
-            test_matrix=test,
-            n_generations=generations,
-            strategy="cooperative",
-            seed=42,
-            verbose=False
-        )
-        
-        progress_bar.progress(50)
-        
-        comp_user_pop, comp_item_pop, comp_history = ce.run_coevolution(
-            train_matrix=train,
-            test_matrix=test,
-            n_generations=generations,
-            strategy="competitive",
-            seed=42,
-            verbose=False
-        )
-        
-        progress_bar.progress(100)
+    coop_user_pop, coop_item_pop, coop_history = cached_run_coevolution(
+        train_matrix=train,
+        test_matrix=test,
+        n_generations=generations,
+        strategy="cooperative",
+        seed=42
+    )
+    
+    progress_bar.progress(50)
+    
+    comp_user_pop, comp_item_pop, comp_history = cached_run_coevolution(
+        train_matrix=train,
+        test_matrix=test,
+        n_generations=generations,
+        strategy="competitive",
+        seed=42
+    )
+    
+    progress_bar.progress(100)
     
     coop_rmse = [h["test_rmse"] for h in coop_history]
     comp_rmse = [h["test_rmse"] for h in comp_history]
