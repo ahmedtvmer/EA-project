@@ -78,7 +78,27 @@ def _competitive_fitness(predicted, train_matrix, top_k=10):
         recommendation_counts[top_k_idx] += 1.0
 
     max_count = recommendation_counts.max() if recommendation_counts.max() > 0 else 1.0
-    item_fitness = (recommendation_counts / max_count).tolist()
+
+    # item_fitness = (recommendation_counts / max_count).tolist()
+
+    # Log-scale popularity to reduce data skewness
+    log_pop = np.log1p(recommendation_counts) / np.log1p(max_count)
+
+    # Blend popularity with RMSE-based fitness to provide gradient-like
+    item_rmse_fitness = []
+    for j in range(n_items):
+        mask = train_matrix[:, j] > 0
+        if mask.sum() > 0:
+            rmse = dt.calculate_fitness(predicted[:, j], train_matrix[:, j], mask=mask)
+        else:
+            rmse = 5.0
+        item_rmse_fitness.append(1.0 / (rmse + eps))
+
+    alpha = 0.5
+    item_fitness = (
+        alpha * log_pop + (1 - alpha) * np.array(item_rmse_fitness)
+    ).tolist()
+
     item_fitness = [max(f, 0.01) for f in item_fitness]  # dont want it to be zero
 
     return user_fitness, item_fitness
